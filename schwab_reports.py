@@ -13,15 +13,55 @@ stock_split_date = pd.to_datetime("2024-06-07", format="%Y-%m-%d").date()
 stock_split_ratio = 10
 
 
-def fixup_stock_splits(df, filter_action, date_column):
+def fixup_stock_splits(df, date_column):
     global stock_split_date, stock_split_ratio
     # if a sale date is before the stock split date, then multiply quantity by split ratio
     for index, row in df.iterrows():
-        if filter_action and row["Action"] != "Sale":
-            continue
         row_date = pd.to_datetime(row[date_column], format="%m/%d/%Y").date()
         if row_date < stock_split_date:
-            df.at[index, "Quantity"] = df.at[index, "Quantity"] * stock_split_ratio
+            # if row has 'Quantity' column, multiply it by split ratio
+            if "Quantity" in row and row["Quantity"] is not None:
+                df.at[index, "Quantity"] = df.at[index, "Quantity"] * stock_split_ratio
+
+
+def normalize_eac_df():
+    global eac_df
+
+    for column in [
+        "Amount",
+        "Shares",
+        "Quantity",
+        "PurchaseFairMarketValue",
+        "VestFairMarketValue",
+    ]:
+        convert_amount_to_numeric(eac_df, column)
+
+    # Gather the sale date and sale price for each sale and apply it to the lot sale rows
+    # use only the lot sale rows in the final sale report from EAC
+    for index, row in eac_df.iterrows():
+        if row["Action"] == "Sale":
+            row_date = pd.to_datetime(row["Date"], format="%m/%d/%Y").date()
+            row_symbol = row["Symbol"]
+            row_sale_fmv = row["Amount"] / row["Quantity"]
+        elif pd.isna(row["Date"]) or row["Date"] == "":
+            eac_df.at[index, "Action"] = "Lot Sale"
+            eac_df.at[index, "Date"] = row_date
+            eac_df.at[index, "Symbol"] = row_symbol
+            eac_df.at[index, "Amount"] = row_sale_fmv * row["Shares"]
+            eac_df.at[index, "Quantity"] = row["Shares"]
+
+            fmv = (
+                row["VestFairMarketValue"]
+                if row["Type"] == "RS"
+                else row["PurchaseFairMarketValue"]
+            )
+            cb = fmv * row["Shares"]
+            eac_df.at[index, "Cost Basis"] = (
+                cb * stock_split_ratio if row_date < stock_split_date else cb
+            )
+            eac_df.at[index, "PurchaseDate"] = (
+                row["VestDate"] if row["Type"] == "RS" else row["PurchaseDate"]
+            )
 
 
 def init_data():
@@ -34,9 +74,10 @@ def init_data():
         "transactions/Individual_realized_gains_2024.csv", skiprows=1
     )
 
+    normalize_eac_df()
     for table in [individual_df, eac_df]:
-        fixup_stock_splits(table, True, "Date")
-    fixup_stock_splits(individual_sales_df, False, "Closed Date")
+        fixup_stock_splits(table, "Date")
+    fixup_stock_splits(individual_sales_df, "Closed Date")
 
 
 def populate_dividend_table():
@@ -95,133 +136,12 @@ def populate_eac_sale_table():
     global sale_table, eac_df
     global stock_split_date, stock_split_ratio
 
-    sale_rows = []
-    current_sale_index = None
-    lot_details = []
-
-    for index, row in eac_df.iterrows():
-        if row["Action"] == "Sale":
-            # If we have a previous sale with lot details, process it
-            if current_sale_index is not None and lot_details:
-                # Calculate average purchase price from PurchaseFairMarketValue or VestFairMarketValue
-                purchase_prices = []
-                purchase_dates = []
-
-                is_RS = False
-                for lot in lot_details:
-                    # Handle both ESPP and RS lot types
-                    if pd.notna(lot["Type"]) and lot["Type"] == "RS":
-                        # For RS (Restricted Stock), use VestDate and VestFairMarketValue
-                        if (
-                            pd.notna(lot["VestFairMarketValue"])
-                            and lot["VestFairMarketValue"] != ""
-                        ):
-                            price = float(lot["VestFairMarketValue"].replace("$", ""))
-                            purchase_prices.append(price)
-
-                        if pd.notna(lot["VestDate"]) and lot["VestDate"] != "":
-                            purchase_dates.append(lot["VestDate"])
-                        is_RS = True
-                    else:
-                        # For ESPP or other types, use PurchaseDate and PurchaseFairMarketValue
-                        if (
-                            pd.notna(lot["PurchaseFairMarketValue"])
-                            and lot["PurchaseFairMarketValue"] != ""
-                        ):
-                            price = float(
-                                lot["PurchaseFairMarketValue"].replace("$", "")
-                            )
-                            purchase_prices.append(price)
-
-                        if pd.notna(lot["PurchaseDate"]) and lot["PurchaseDate"] != "":
-                            purchase_dates.append(lot["PurchaseDate"])
-
-                avg_purchase_price = (
-                    sum(purchase_prices) / len(purchase_prices)
-                    if purchase_prices
-                    else 0
-                )
-                sale_quantity = float(sale_rows[current_sale_index]["Quantity"])
-                if is_RS:
-                    adjusted_purchase_price = avg_purchase_price / stock_split_ratio
-                else:
-                    adjusted_purchase_price = avg_purchase_price
-                sale_rows[current_sale_index]["Cost Basis"] = (
-                    adjusted_purchase_price * sale_quantity
-                )
-
-                # Set earliest purchase date or comma-separated list of all dates
-                if purchase_dates:
-                    # Sort dates and take the earliest one
-                    purchase_dates.sort()
-                    sale_rows[current_sale_index]["PurchaseDate"] = purchase_dates[0]
-                    # Alternative: show all dates - sale_rows[current_sale_index]['PurchaseDate'] = ', '.join(purchase_dates)
-
-            # Start new sale
-            current_sale_index = len(sale_rows)
-            sale_rows.append(
-                {
-                    "Date": row["Date"],
-                    "Symbol": row["Symbol"],
-                    "Quantity": row["Quantity"],
-                    "Amount": row["Amount"],
-                    "Cost Basis": 0,  # Will be calculated from lot details
-                    "PurchaseDate": "",  # Will be populated from lot details
-                }
-            )
-            lot_details = []
-
-        elif pd.isna(row["Date"]) or row["Date"] == "":
-            # This is a lot detail row
-            if current_sale_index is not None:
-                lot_details.append(row)
-
-    # Process the last sale if exists
-    if current_sale_index is not None and lot_details:
-        purchase_prices = []
-        purchase_dates = []
-        for lot in lot_details:
-            # Handle both ESPP and RS lot types
-            if pd.notna(lot["Type"]) and lot["Type"] == "RS":
-                # For RS (Restricted Stock), use VestDate and VestFairMarketValue
-                if (
-                    pd.notna(lot["VestFairMarketValue"])
-                    and lot["VestFairMarketValue"] != ""
-                ):
-                    price = float(lot["VestFairMarketValue"].replace("$", ""))
-                    purchase_prices.append(price)
-
-                if pd.notna(lot["VestDate"]) and lot["VestDate"] != "":
-                    purchase_dates.append(lot["VestDate"])
-            else:
-                # For ESPP or other types, use PurchaseDate and PurchaseFairMarketValue
-                if (
-                    pd.notna(lot["PurchaseFairMarketValue"])
-                    and lot["PurchaseFairMarketValue"] != ""
-                ):
-                    price = float(lot["PurchaseFairMarketValue"].replace("$", ""))
-                    purchase_prices.append(price)
-
-                if pd.notna(lot["PurchaseDate"]) and lot["PurchaseDate"] != "":
-                    purchase_dates.append(lot["PurchaseDate"])
-
-        avg_purchase_price = (
-            sum(purchase_prices) / len(purchase_prices) if purchase_prices else 0
-        )
-        sale_quantity = float(sale_rows[current_sale_index]["Quantity"])
-        sale_rows[current_sale_index]["Cost Basis"] = avg_purchase_price * sale_quantity
-
-        # Set earliest purchase date or comma-separated list of all dates
-        if purchase_dates:
-            # Sort dates and take the earliest one
-            purchase_dates.sort()
-            sale_rows[current_sale_index]["PurchaseDate"] = purchase_dates[0]
-            # Alternative: show all dates - sale_rows[current_sale_index]['PurchaseDate'] = ', '.join(purchase_dates)
-
-    if sale_table is None:
-        sale_table = pd.DataFrame(sale_rows)
-    else:
-        sale_table = pd.concat([sale_table, pd.DataFrame(sale_rows)], ignore_index=True)
+    eac_df = eac_df[eac_df["Action"] == "Lot Sale"].copy()
+    eac_df = eac_df[
+        ["Date", "Symbol", "Quantity", "Amount", "Cost Basis", "PurchaseDate"]
+    ].copy()
+    eac_df["Date"] = pd.to_datetime(eac_df["Date"], format="%m/%d/%Y")
+    sale_table = pd.concat([sale_table, eac_df], ignore_index=True)
 
 
 def populate_individual_sale_table():
