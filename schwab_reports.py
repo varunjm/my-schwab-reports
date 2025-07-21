@@ -1,7 +1,8 @@
 import pandas as pd
+import os
 
-individual_df = None
 eac_df = None
+individual_df = None
 individual_sales_df = None
 
 dividend_table = None
@@ -67,25 +68,34 @@ def normalize_eac_df():
 def init_data():
     global individual_df, eac_df, individual_sales_df
 
-    df = pd.read_csv("transactions/Individual_transactions_2024.csv")
-    individual_df = df[df["Action"] != "Reinvest Shares"].copy()
-    eac_df = pd.read_csv("transactions/EAC_transactions_2024.csv")
-    individual_sales_df = pd.read_csv(
-        "transactions/Individual_realized_gains_2024.csv", skiprows=1
-    )
+    if os.path.exists("transactions/Individual_transactions_2024.csv"):
+        df = pd.read_csv("transactions/Individual_transactions_2024.csv")
+        individual_df = df[df["Action"] != "Reinvest Shares"].copy()
+        fixup_stock_splits(individual_df, "Date")
 
-    normalize_eac_df()
-    for table in [individual_df, eac_df]:
-        fixup_stock_splits(table, "Date")
-    fixup_stock_splits(individual_sales_df, "Closed Date")
+    if os.path.exists("transactions/Individual_realized_gains_2024.csv"):
+        individual_sales_df = pd.read_csv(
+            "transactions/Individual_realized_gains_2024.csv", skiprows=1
+        )
+        fixup_stock_splits(individual_sales_df, "Closed Date")
+
+    if os.path.exists("transactions/EAC_transactions_2024.csv"):
+        eac_df = pd.read_csv("transactions/EAC_transactions_2024.csv")
+        normalize_eac_df()
+        fixup_stock_splits(eac_df, "Date")
 
 
 def populate_dividend_table():
     global dividend_table
     dividend_actions = ["Reinvest Dividend", "Qual Div Reinvest"]
-    dividend_table = individual_df[
-        individual_df["Action"].isin(dividend_actions)
-    ].copy()
+
+    if individual_df is not None:
+        dividend_table = individual_df[
+            individual_df["Action"].isin(dividend_actions)
+        ].copy()
+    else:
+        dividend_table = pd.DataFrame(columns=["Date", "Action", "Symbol", "Amount"])
+
     dividend_table = dividend_table[["Date", "Action", "Symbol", "Amount"]].copy()
 
     if eac_df is not None:
@@ -93,9 +103,11 @@ def populate_dividend_table():
         eac_dividend_table = eac_dividend_table[
             ["Date", "Action", "Symbol", "Amount"]
         ].copy()
-        dividend_table = pd.concat(
-            [dividend_table, eac_dividend_table], ignore_index=True
-        )
+        # Only concatenate if eac_dividend_table is not empty
+        if not eac_dividend_table.empty:
+            dividend_table = pd.concat(
+                [dividend_table, eac_dividend_table], ignore_index=True
+            )
 
     # convert the data type of the "Date" column to datetime
     dividend_table["Date"] = pd.to_datetime(dividend_table["Date"], format="%m/%d/%Y")
@@ -104,7 +116,12 @@ def populate_dividend_table():
 
 def populate_interest_table():
     global interest_table
-    interest_table = individual_df[individual_df["Action"] == "Credit Interest"].copy()
+    if individual_df is not None:
+        interest_table = individual_df[
+            individual_df["Action"] == "Credit Interest"
+        ].copy()
+    else:
+        interest_table = pd.DataFrame(columns=["Date", "Action", "Amount"])
     interest_table = interest_table[["Date", "Action", "Amount"]].copy()
     interest_table["Date"] = pd.to_datetime(interest_table["Date"], format="%m/%d/%Y")
     interest_table = interest_table.sort_values(by="Date")
@@ -113,19 +130,24 @@ def populate_interest_table():
 def populate_tax_deducted_table():
     global tax_deducted_table
     tax_deducted_actions = ["NRA Tax Adj"]
-    tax_deducted_table = individual_df[
-        individual_df["Action"].isin(tax_deducted_actions)
-    ].copy()
-    # Keep only these columns in tax_deducted_table: Date, Symbol, Amount
-    tax_deducted_table = tax_deducted_table[["Date", "Symbol", "Amount"]].copy()
+    if individual_df is not None:
+        tax_deducted_table = individual_df[
+            individual_df["Action"].isin(tax_deducted_actions)
+        ].copy()
+        tax_deducted_table = tax_deducted_table[["Date", "Symbol", "Amount"]].copy()
 
     if eac_df is not None:
         eac_tax_table = eac_df[eac_df["Action"] == "Tax Withholding"].copy()
         # Keep only these columns in eac_tax_table: Date, Symbol, Amount
         eac_tax_table = eac_tax_table[["Date", "Symbol", "Amount"]].copy()
-        tax_deducted_table = pd.concat(
-            [tax_deducted_table, eac_tax_table], ignore_index=True
-        )
+        # Only concatenate if eac_tax_table is not empty
+        if not eac_tax_table.empty:
+            tax_deducted_table = (
+                eac_tax_table
+                if tax_deducted_table is None
+                else pd.concat([tax_deducted_table, eac_tax_table], ignore_index=True)
+            )
+
     tax_deducted_table["Date"] = pd.to_datetime(
         tax_deducted_table["Date"], format="%m/%d/%Y"
     )
@@ -141,7 +163,11 @@ def populate_eac_sale_table():
         ["Date", "Symbol", "Quantity", "Amount", "Cost Basis", "PurchaseDate"]
     ].copy()
     eac_df["Date"] = pd.to_datetime(eac_df["Date"], format="%m/%d/%Y")
-    sale_table = pd.concat([sale_table, eac_df], ignore_index=True)
+    sale_table = (
+        eac_df
+        if sale_table is None
+        else pd.concat([sale_table, eac_df], ignore_index=True)
+    )
 
 
 def populate_individual_sale_table():
@@ -171,8 +197,11 @@ def populate_individual_sale_table():
 def populate_sale_table():
     global sale_table, individual_sales_df
     populate_eac_sale_table()
-    populate_individual_sale_table()
-    sale_table = pd.concat([sale_table, individual_sales_df], ignore_index=True)
+    if individual_sales_df is not None:
+        populate_individual_sale_table()
+        # Only concatenate if individual_sales_df is not empty
+        if not individual_sales_df.empty:
+            sale_table = pd.concat([sale_table, individual_sales_df], ignore_index=True)
     sale_table["Date"] = pd.to_datetime(sale_table["Date"], format="%m/%d/%Y")
     sale_table = sale_table.sort_values(by="Date")
 
