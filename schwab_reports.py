@@ -1,20 +1,33 @@
 import pandas as pd
 import os
+from typing import Optional, Union, List
+from datetime import date
 
-eac_df = None
-individual_df = None
-individual_sales_df = None
+# Global DataFrames with type hints
+eac_df: Optional[pd.DataFrame] = None
+individual_df: Optional[pd.DataFrame] = None
+individual_sales_df: Optional[pd.DataFrame] = None
 
-dividend_table = None
-interest_table = None
-tax_deducted_table = None
-sale_table = None
+dividend_table: Optional[pd.DataFrame] = None
+interest_table: Optional[pd.DataFrame] = None
+tax_deducted_table: Optional[pd.DataFrame] = None
+sale_table: Optional[pd.DataFrame] = None
 
-stock_split_date = pd.to_datetime("2024-06-07", format="%Y-%m-%d").date()
-stock_split_ratio = 10
+# Configuration variables
+stock_split_date: date = pd.to_datetime("2024-06-07", format="%Y-%m-%d").date()
+stock_split_ratio: int = 10
 
 
-def fixup_stock_splits(df, date_column):
+def fixup_stock_splits(df: pd.DataFrame, date_column: str) -> None:
+    """
+    Apply stock split adjustments to quantity data based on transaction dates.
+
+    For transactions before the stock split date, multiply quantities by the split ratio.
+
+    Args:
+        df: DataFrame containing transaction data
+        date_column: Name of the column containing transaction dates
+    """
     global stock_split_date, stock_split_ratio
     # if a sale date is before the stock split date, then multiply quantity by split ratio
     for index, row in df.iterrows():
@@ -25,7 +38,13 @@ def fixup_stock_splits(df, date_column):
                 df.at[index, "Quantity"] = df.at[index, "Quantity"] * stock_split_ratio
 
 
-def normalize_eac_df():
+def normalize_eac_df() -> None:
+    """
+    Normalize and process EAC DataFrame with proper sale lot handling.
+
+    Converts amount columns to numeric and processes sale transactions to create
+    proper lot sale entries with calculated cost basis and purchase dates.
+    """
     global eac_df
 
     for column in [
@@ -65,7 +84,17 @@ def normalize_eac_df():
             )
 
 
-def init_data():
+def init_data() -> None:
+    """
+    Initialize and load data from CSV files into global DataFrames.
+    
+    Loads transaction data from three possible CSV files:
+    - Individual_transactions_YYYY.csv
+    - Individual_realized_gains_YYYY.csv
+    - EAC_transactions_YYYY.csv
+    
+    Applies necessary preprocessing including stock split adjustments.
+    """
     global individual_df, eac_df, individual_sales_df
 
     if os.path.exists("transactions/Individual_transactions_2024.csv"):
@@ -85,7 +114,13 @@ def init_data():
         fixup_stock_splits(eac_df, "Date")
 
 
-def populate_dividend_table():
+def populate_dividend_table() -> None:
+    """
+    Process and consolidate dividend transactions from all sources.
+    
+    Combines dividend data from both individual and EAC accounts,
+    sorts by date, and stores in the global dividend_table.
+    """
     global dividend_table
     dividend_actions = ["Reinvest Dividend", "Qual Div Reinvest"]
 
@@ -114,7 +149,13 @@ def populate_dividend_table():
     dividend_table = dividend_table.sort_values(by="Date")
 
 
-def populate_interest_table():
+def populate_interest_table() -> None:
+    """
+    Process interest transactions from individual account data.
+    
+    Extracts credit interest transactions, sorts by date, and stores
+    in the global interest_table.
+    """
     global interest_table
     if individual_df is not None:
         interest_table = individual_df[
@@ -127,7 +168,13 @@ def populate_interest_table():
     interest_table = interest_table.sort_values(by="Date")
 
 
-def populate_tax_deducted_table():
+def populate_tax_deducted_table() -> None:
+    """
+    Process tax deduction transactions from all sources.
+    
+    Combines tax withholding data from both individual and EAC accounts,
+    sorts by date, and stores in the global tax_deducted_table.
+    """
     global tax_deducted_table
     tax_deducted_actions = ["NRA Tax Adj"]
     if individual_df is not None:
@@ -154,7 +201,13 @@ def populate_tax_deducted_table():
     tax_deducted_table = tax_deducted_table.sort_values(by="Date")
 
 
-def populate_eac_sale_table():
+def populate_eac_sale_table() -> None:
+    """
+    Process EAC sale transactions and add to sale table.
+    
+    Extracts lot sale data from EAC transactions with proper date conversion
+    and adds to the global sale_table.
+    """
     global sale_table, eac_df
     global stock_split_date, stock_split_ratio
 
@@ -170,7 +223,13 @@ def populate_eac_sale_table():
     )
 
 
-def populate_individual_sale_table():
+def populate_individual_sale_table() -> None:
+    """
+    Process individual account sale transactions.
+    
+    Normalizes column names to match the standard sale table format
+    and prepares data for consolidation.
+    """
     global individual_sales_df
     individual_sales_df = individual_sales_df[
         [
@@ -194,7 +253,13 @@ def populate_individual_sale_table():
     )
 
 
-def populate_sale_table():
+def populate_sale_table() -> None:
+    """
+    Consolidate all sale transactions from EAC and individual accounts.
+    
+    Combines sale data from all sources, sorts by date, and stores
+    in the global sale_table.
+    """
     global sale_table, individual_sales_df
     populate_eac_sale_table()
     if individual_sales_df is not None:
@@ -206,7 +271,22 @@ def populate_sale_table():
     sale_table = sale_table.sort_values(by="Date")
 
 
-def convert_amount_to_numeric(table, field_name):
+def convert_amount_to_numeric(table: pd.DataFrame, field_name: str) -> None:
+    """
+    Convert currency strings to numeric values, handling various formats.
+    
+    Handles the following formats:
+    - Dollar signs ($): $1,234.56 -> 1234.56
+    - Commas: 1,234.56 -> 1234.56  
+    - Parentheses for negatives: (123.45) -> -123.45
+    
+    Args:
+        table: The pandas DataFrame to modify
+        field_name: The column name to convert to numeric
+        
+    Note:
+        Modifies the DataFrame in-place
+    """
     # skip index
     table[field_name] = table[field_name].astype(str)
     if table[field_name].str.contains("\\$").any():
@@ -219,7 +299,7 @@ def convert_amount_to_numeric(table, field_name):
     table[field_name] = table[field_name].str.strip().astype(float)
 
 
-def save_reports_to_csv():
+def save_reports_to_csv() -> None:
     global dividend_table, interest_table, tax_deducted_table, sale_table
 
     dividend_table.to_csv(
@@ -242,7 +322,7 @@ def save_reports_to_csv():
     print("- sale_transactions.csv")
 
 
-def cleanup_all_tables():
+def cleanup_all_tables() -> None:
     global dividend_table, interest_table, tax_deducted_table
     for table in [dividend_table, interest_table, tax_deducted_table, sale_table]:
         convert_amount_to_numeric(table, "Amount")
