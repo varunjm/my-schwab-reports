@@ -1,0 +1,18 @@
+# Processing Year
+year: 2024
+
+# Stock Split Information
+stock_splits:
+  - date: "2024-06-07"
+    ratio: 10
+
+# File Paths and Patterns
+directories:
+  transactions: "transactions"
+  reports: "reports"
+
+# File naming patterns (use {year} placeholder)
+file_patterns:
+  eac_transactions: "EAC_transactions_{year}.csv"
+  individual_transactions: "Individual_transactions_{year}.csv"
+  individual_realized_gains: "Individual_realized_gains_{year}.csv"
