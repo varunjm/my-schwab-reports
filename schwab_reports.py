@@ -252,6 +252,10 @@ class SchwabReportsProcessor:
         sorts by date, and stores in the tax_deducted_table.
         """
         tax_deducted_actions: List[str] = ["NRA Tax Adj"]
+
+        # Initialize empty table first
+        self.tax_deducted_table = None
+
         if self.individual_df is not None:
             self.tax_deducted_table = self.individual_df[
                 self.individual_df["Action"].isin(tax_deducted_actions)
@@ -276,10 +280,16 @@ class SchwabReportsProcessor:
                     )
                 )
 
-        self.tax_deducted_table["Date"] = pd.to_datetime(
-            self.tax_deducted_table["Date"], format="%m/%d/%Y"
-        )
-        self.tax_deducted_table = self.tax_deducted_table.sort_values(by="Date")
+        # If still None, create empty DataFrame
+        if self.tax_deducted_table is None:
+            self.tax_deducted_table = pd.DataFrame(columns=["Date", "Symbol", "Amount"])
+
+        # Only process if not empty
+        if not self.tax_deducted_table.empty:
+            self.tax_deducted_table["Date"] = pd.to_datetime(
+                self.tax_deducted_table["Date"], format="%m/%d/%Y"
+            )
+            self.tax_deducted_table = self.tax_deducted_table.sort_values(by="Date")
 
     def populate_eac_sale_table(self) -> None:
         """
@@ -288,16 +298,18 @@ class SchwabReportsProcessor:
         Extracts lot sale data from EAC transactions with proper date conversion
         and adds to the sale_table.
         """
-        eac_sales = self.eac_df[self.eac_df["Action"] == "Lot Sale"].copy()
-        eac_sales = eac_sales[
-            ["Date", "Symbol", "Quantity", "Amount", "Cost Basis", "PurchaseDate"]
-        ].copy()
-        eac_sales["Date"] = pd.to_datetime(eac_sales["Date"], format="%m/%d/%Y")
-        self.sale_table = (
-            eac_sales
-            if self.sale_table is None
-            else pd.concat([self.sale_table, eac_sales], ignore_index=True)
-        )
+        if self.eac_df is not None:
+            eac_sales = self.eac_df[self.eac_df["Action"] == "Lot Sale"].copy()
+            eac_sales = eac_sales[
+                ["Date", "Symbol", "Quantity", "Amount", "Cost Basis", "PurchaseDate"]
+            ].copy()
+            if not eac_sales.empty:
+                eac_sales["Date"] = pd.to_datetime(eac_sales["Date"], format="%m/%d/%Y")
+                self.sale_table = (
+                    eac_sales
+                    if self.sale_table is None
+                    else pd.concat([self.sale_table, eac_sales], ignore_index=True)
+                )
 
     def populate_individual_sale_table(self) -> None:
         """
@@ -343,10 +355,26 @@ class SchwabReportsProcessor:
                 self.sale_table = pd.concat(
                     [self.sale_table, individual_sales], ignore_index=True
                 )
-        self.sale_table["Date"] = pd.to_datetime(
-            self.sale_table["Date"], format="%m/%d/%Y"
-        )
-        self.sale_table = self.sale_table.sort_values(by="Date")
+
+        # If still None, create empty DataFrame
+        if self.sale_table is None:
+            self.sale_table = pd.DataFrame(
+                columns=[
+                    "Date",
+                    "Symbol",
+                    "Quantity",
+                    "Amount",
+                    "Cost Basis",
+                    "PurchaseDate",
+                ]
+            )
+
+        # Only process if not empty
+        if not self.sale_table.empty:
+            self.sale_table["Date"] = pd.to_datetime(
+                self.sale_table["Date"], format="%m/%d/%Y"
+            )
+            self.sale_table = self.sale_table.sort_values(by="Date")
 
     @staticmethod
     def convert_amount_to_numeric(table: pd.DataFrame, field_name: str) -> None:
@@ -419,8 +447,11 @@ class SchwabReportsProcessor:
             self.tax_deducted_table,
             self.sale_table,
         ]:
-            self.convert_amount_to_numeric(table, "Amount")
-        self.convert_amount_to_numeric(self.sale_table, "Cost Basis")
+            if table is not None and not table.empty:
+                self.convert_amount_to_numeric(table, "Amount")
+
+        if self.sale_table is not None and not self.sale_table.empty:
+            self.convert_amount_to_numeric(self.sale_table, "Cost Basis")
 
     def process_all(self) -> None:
         """

@@ -145,6 +145,86 @@ The script generates the following CSV files in the `reports/` directory:
 ✅ **Multiple account support** - EAC and Individual accounts  
 ✅ **Type-safe code** - Full type hints for better maintainability  
 ✅ **Error handling** - Graceful handling of missing files and data issues  
+✅ **Comprehensive test suite** - Unit and integration tests with high coverage  
+✅ **Code quality tools** - Pre-commit hooks, linting, and type checking  
+
+## Development and Testing
+
+### Running Tests
+
+To run the test suite, first install development dependencies:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+Run all tests:
+```bash
+pytest
+```
+
+**Quick test runner script:**
+```bash
+# Run all tests
+python run_tests.py
+
+# Run with coverage
+python run_tests.py --test-type coverage
+
+# Run with code quality checks
+python run_tests.py --quality
+
+# Install deps and run everything
+python run_tests.py --install-deps --quality
+```
+
+Run tests with coverage report:
+```bash
+pytest --cov=schwab_reports --cov-report=html
+```
+
+Run specific test files:
+```bash
+pytest tests/test_config.py
+pytest tests/test_data_processing.py
+pytest tests/test_integration.py
+```
+
+### Code Quality
+
+Install pre-commit hooks for automatic code quality checks:
+
+```bash
+pre-commit install
+```
+
+Run code quality checks manually:
+```bash
+# Format code
+black schwab_reports.py
+
+# Sort imports
+isort schwab_reports.py
+
+# Lint code
+ruff check schwab_reports.py
+
+# Type checking
+mypy schwab_reports.py
+
+# Security scan
+bandit -r schwab_reports.py
+```
+
+### Test Coverage
+
+The test suite includes:
+- **Configuration tests**: Loading and validation of config files
+- **Data processing tests**: Stock splits, amount conversion, data loading
+- **Integration tests**: Complete pipeline execution and file output
+- **Edge case tests**: Error handling and boundary conditions
+
+Current test coverage: **80%+** (enforced by pytest configuration)
 
 ## Future Enhancements
 - Generate reports in exact format needed for Indian Income Tax filing
